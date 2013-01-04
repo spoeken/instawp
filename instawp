@@ -1,0 +1,183 @@
+#! /bin/bash
+
+#Insert your creds here
+#------------------------
+
+LocalUser="root"; #your local database username
+LocalPass="root"; #your local database password
+LocalHostName="localhost" #your local hostname, usually localhost
+RemoteUser="root"; #your remote database username
+RemotePass="root"; #your remote database password
+
+LocalDomain="http://localhost"
+RemoteDomain="http://example.com"
+
+WpEmail="spoeken%40example.com" #remember to write %40 instead of @
+WpPass="admin" #Here you can write what username to use with wordpress
+WpUser="password" #Here you can write what password to use with wordpress
+
+RemoteSSH="username@example.com" #
+RemotePath="/Sites" #the root for your projects on the server
+
+
+#Do not edit anything below this line, unless you know what your doing. Or like to live dangerous.
+#------------------------
+
+dbName=$1;
+
+echo  'ooooo                          o8           oooo     oooo oooooooooo'
+echo  ' 888  oo oooooo    oooooooo8 o888oo  ooooooo 88   88  88   888    888'
+echo  ' 888   888   888  888ooooooo  888    ooooo888 88 888 88    888oooo88'
+echo  ' 888   888   888          888 888  888    888  888 888     888'
+echo  'o888o o888o o888o 88oooooo88   888o 88ooo88 8o  8   8     o888o'
+
+sites;
+echo -ne  "Create dir $1"
+mkdir $1
+cd $1;
+mkdir .git;
+cd .git;
+
+echo -ne  "Init git"
+git init --bare;
+
+cd hooks;
+echo -ne  "Create post-receive"
+touch post-receive;
+echo -ne  "#!/bin/bash\n" >> post-receive;
+echo -ne  "GIT_WORK_TREE=$RemotePath/$1 git checkout -f" >> post-receive;
+echo -ne  "Chmod post-receive"
+chmod +x post-receive;
+cd ../../../;
+
+echo -ne  "Upload to server";
+scp -r $1 $RemoteSSH:$RemotePath/;
+
+cd $1;
+echo -ne  "Remove .git to get a clean start"
+rm -rf .git;
+
+echo -ne  "Re-initialising git";
+git init;
+
+echo -ne  "Installing WP";
+echo -ne  "Downloading latest WordPress"
+curl -O http://wordpress.org/latest.tar.gz;
+echo -ne  "Unzipping"
+tar xfz latest.tar.gz;
+echo -ne  "Moving files out of folder"
+mv wordpress/* ./;
+echo -ne  "Deleting folder"
+rmdir ./wordpress/;
+echo -ne  "Deleting zip file"
+rm -f latest.tar.gz;
+echo -ne "Create gitignore"
+touch .gitignore
+echo wp-config-local.php >> .gitignore
+echo -ne  "Adding remote and pushing";
+git add .
+git commit -m 'Initial commit';
+git remote add origin $RemoteSSH:$RemotePath/$1/.git;
+git push origin master;
+
+# Create the wp-config file with the sed command
+#-------------------------
+echo -ne  "Creating wp-config"
+cp wp-config-sample.php wp-config.php
+
+# This is a php function that lets us put local db creds in its own file
+# while the server uses the creds in wp-config.php
+#-------------------------
+sed "s/\/\*\* The name of the database/\
+if \( file_exists\( dirname\( __FILE__ \) \. \'\/wp\-config\-local\.php\' \) \) \{\
+include\( dirname\( __FILE__ \) \. \'\/wp\-config\-local\.php\' \)\;\
+define\( \'WP_LOCAL_DEV\'\, true \)\;\
+\} else \{ \/\*\* The name of the database/g" wp-config.php > wp-config-temp.php
+rm wp-config.php
+mv wp-config-temp.php wp-config.php
+
+sed "s/define(\'DB_COLLATE\'\, \'\'[)]\;/define(\'DB_COLLATE\'\, \'\')\; \}/g" wp-config.php > wp-config-temp.php
+rm wp-config.php
+mv wp-config-temp.php wp-config.php
+
+# Here comes the remote credetials	
+#-------------------------
+sed 's/'database_name_here'/'$dbName'/g' wp-config.php > wp-config-temp.php
+rm wp-config.php
+mv wp-config-temp.php wp-config.php
+
+sed 's/'username_here'/'$RemoteUser'/g' wp-config.php > wp-config-temp.php
+rm wp-config.php
+mv wp-config-temp.php wp-config.php
+
+sed 's/'password_here'/'$RemotePass'/g' wp-config.php > wp-config-temp.php
+rm wp-config.php
+mv wp-config-temp.php wp-config.php
+
+# And the local creds will be put in wp-config-local.php
+#-------------------------
+
+read -d '' localCreds <<EOF
+<?php
+define('DB_NAME', '$dbName');
+
+/** MySQL database username */
+define('DB_USER', '$LocalUser');
+
+/** MySQL database password */
+define('DB_PASSWORD', '$LocalPass');
+
+/** MySQL hostname */
+define('DB_HOST', 'localhost');
+
+/** Database Charset to use in creating database tables. */
+define('DB_CHARSET', 'utf8');
+
+/** The Database Collate type. Don't change this if in doubt. */
+define('DB_COLLATE', '');
+EOF
+
+echo "$localCreds" > wp-config-local.php
+
+# Add local config file to gitignore
+echo 'wp-local-config.php' >> .gitignore
+
+# Use git to download latest version of twitter bootstrap
+#-------------------------
+
+echo -ne  "Downloading Twitter Bootstrap"
+mkdir wp-content/themes/bootstrap
+#git clone https://github.com/twitter/bootstrap.git wp-content/themes/bootstrap
+
+echo -ne  "Commit and push to server";
+git add .
+git commit -m 'Wordpress and Twitter bootstrap';
+git push origin master;
+
+# Create the databases
+#-------------------------
+
+echo -ne  "Creating Local Database"
+mysql -u $LocalUser -h $LocalHostName -p$LocalPass -Bse "CREATE DATABASE $dbName;"
+
+
+sql="CREATE DATABASE $dbName;"
+# copy command to a temporary file
+tmpsql="/tmp/sql$$"
+echo "$sql" > $tmpsql
+
+# copy command file to server
+scp $tmpsql $RemoteSSH:$tmpsql
+# run command remotely with removing command file afterwards
+ssh $RemoteSSH "/usr/local/mysql/bin/mysql -u$RemoteUser -p$RemotePass < $tmpsql; rm $tmpsql;"
+# remove local copy of command file
+rm $tmpsql;
+
+echo -ne "Install wordpress on server"
+curl -X POST -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:12.0) Gecko/20100101 Firefox/12.0" -e "$RemoteDomain/$1/wp-admin/install.php?step=2" -H "Content-Type:application/x-www-form-urlencoded" -H "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" -H "Accept-Encoding:gzip, deflate" --data "?step=2&weblog_title=$1&user_name=$WpUser&admin_password=$WpPass&admin_password2=$WpPass&admin_email=$WpEmail&Submit=Install+WordPress" $RemoteDomain/$1/wp-admin/install.php?step=2&weblog_title=$1&user_name=$WpUser&admin_password=$WpPass&admin_password2=$WpPass&admin_email=$WpEmail&Submit=Install+WordPress>/dev/null 2>&1
+
+echo -ne "Install wordpress locally"
+curl -X POST -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.8; rv:12.0) Gecko/20100101 Firefox/12.0" -e "$LocalDomain/$1/wp-admin/install.php?step=2" -H "Content-Type:application/x-www-form-urlencoded" -H "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" -H "Accept-Encoding:gzip, deflate" --data "?step=2&weblog_title=$1&user_name=$WpUser&admin_password=$WpPass&admin_password2=$WpPass&admin_email=$WpEmail&Submit=Install+WordPress" $LocalDomain/$1/wp-admin/install.php?step=2&weblog_title=$1&user_name=$WpUser&admin_password=$WpPass&admin_password2=$WpPass&admin_email=$WpEmail&Submit=Install+WordPress>/dev/null 2>&1
+
+echo -ne  "DONE!"
+
