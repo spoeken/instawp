@@ -19,7 +19,7 @@ How does it do it?
 ==================
 This is a step by step description of what the script does
 
-1.Script is initiated with _instawp myproject_. _myproject_ will be used for folder name and database name 
+1. Script is initiated with _instawp myproject_. _myproject_ will be used for folder name and database name 
 
 2. Cd to $LocalPath and create the myproject folder
 
